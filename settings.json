@@ -1,0 +1,35 @@
+{
+  "guildId": {
+    "automod": {
+      "enabled": true,
+      "categories": {
+        "discordLink": {
+          "enabled": true,
+          "sanction": "warn"
+        },
+        "ghostPing": {
+          "enabled": false,
+          "sanction": "warn"
+        },
+        "mentionSpam": {
+          "enabled": true,
+          "sanction": "warn"
+        },
+        "spam": {
+          "enabled": true,
+          "sanction": "warn"
+        },
+        "badWords": {
+          "enabled": true,
+          "sanction": "warn"
+        }
+      }
+    }
+  },
+  "1377590870903357450": {
+    "welcome": {
+      "enabled": false,
+      "channel": "1377642487996223499"
+    }
+  }
+}
