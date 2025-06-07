@@ -2,7 +2,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const settings = require('../settings.json');
+const settingsPath = path.resolve('./settings.json');
 
 const data = new SlashCommandBuilder()
   .setName('automod')
@@ -57,16 +57,38 @@ const data = new SlashCommandBuilder()
         { name: 'mute', value: 'mute' },
         { name: 'kick', value: 'kick' },
         { name: 'ban', value: 'ban' }
-      )));
+      )))
+  .addSubcommand(sub =>
+    sub.setName('ignore')
+      .setDescription('Ajouter ou retirer un rôle ignoré par l\'automod')
+      .addRoleOption(opt =>
+        opt.setName('role')
+          .setDescription('Rôle à ignorer')
+          .setRequired(true)
+      )
+      .addBooleanOption(opt =>
+        opt.setName('remove')
+          .setDescription('Retirer le rôle de la liste des ignorés')
+          .setRequired(false)
+      )
+  );
 
 async function execute(interaction) {
   const guildId = interaction.guild.id;
   const sub = interaction.options.getSubcommand();
-  const filePath = path.resolve('./settings.json');
+  // Toujours recharger settings
+  let settingsObj;
+  try {
+    settingsObj = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    settingsObj = {};
+  }
+  if (!settingsObj[guildId]) settingsObj[guildId] = {};
+  if (!settingsObj[guildId].automod) settingsObj[guildId].automod = { enabled: false, categories: {} };
+  if (!settingsObj[guildId].automod.categories) settingsObj[guildId].automod.categories = {};
+  if (!settingsObj[guildId].automod.ignoredRoles) settingsObj[guildId].automod.ignoredRoles = [];
 
-  if (!settings[guildId]) settings[guildId] = { automod: { enabled: false, categories: {} } };
-
-  const automod = settings[guildId].automod;
+  const automod = settingsObj[guildId].automod;
 
   if (sub === 'enable') {
     automod.enabled = true;
@@ -89,9 +111,22 @@ async function execute(interaction) {
     if (!automod.categories[nom]) automod.categories[nom] = {};
     automod.categories[nom].sanction = sanction;
     await interaction.reply(`⚠️ Sanction de **${nom}** définie sur **${sanction}**.`);
+  } else if (sub === 'ignore') {
+    const role = interaction.options.getRole('role');
+    const remove = interaction.options.getBoolean('remove') || false;
+    const roleId = role.id;
+    if (remove) {
+      automod.ignoredRoles = automod.ignoredRoles.filter(r => r !== roleId);
+      await interaction.reply(`❌ Le rôle <@&${roleId}> n'est plus ignoré par l'automod.`);
+    } else {
+      if (!automod.ignoredRoles.includes(roleId)) {
+        automod.ignoredRoles.push(roleId);
+      }
+      await interaction.reply(`✅ Le rôle <@&${roleId}> est maintenant ignoré par l'automod.`);
+    }
   }
 
-  fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+  fs.writeFileSync(settingsPath, JSON.stringify(settingsObj, null, 2));
 }
 
 module.exports = { data, execute };

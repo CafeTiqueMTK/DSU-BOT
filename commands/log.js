@@ -41,7 +41,9 @@ module.exports = {
     switch (sub) {
       case 'enable':
         logs.enabled = true;
-        await interaction.reply('✅ Les logs sont maintenant activés.');
+        // Active toutes les catégories lors de l'activation globale
+        Object.keys(logs.categories).forEach(cat => logs.categories[cat] = true);
+        await interaction.reply('✅ Les logs et toutes les catégories sont maintenant activés.');
         break;
 
       case 'disable':

@@ -82,8 +82,16 @@ module.exports = {
     });
 
     // Log la sanction dans le salon de logs si configuré
-    if (typeof logModerationAction === 'function') {
-      logModerationAction(interaction.guild, target, 'warn', reason, moderator);
+    // Correction : importer la fonction logModerationAction depuis le fichier principal si possible
+    // Sinon, utilisez le pattern suivant pour accéder à la fonction globale
+    try {
+      if (typeof logModerationAction === 'function') {
+        logModerationAction(interaction.guild, target, 'warn', reason, moderator);
+      } else if (interaction.client && typeof interaction.client.logModerationAction === 'function') {
+        interaction.client.logModerationAction(interaction.guild, target, 'warn', reason, moderator);
+      }
+    } catch (err) {
+      // Logging failed, ignore
     }
   }
 };

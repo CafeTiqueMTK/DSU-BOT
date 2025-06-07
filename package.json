@@ -9,7 +9,7 @@
     "express-session": "^1.17.3",
     "connect-mongo": "^4.6.0",
     "passport": "^0.4.1",
-    "passport-discord": "^0.2.4",
+    "passport-discord": "^0.1.4",
     "passport-local": "^1.0.0",
     "cookie-parser": "^1.4.6",
     "bcrypt": "^5.1.0",

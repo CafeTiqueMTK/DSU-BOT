@@ -1,7 +1,8 @@
-const { Client, GatewayIntentBits, Collection, Events, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events, REST, Routes, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { readFileSync, promises: { readFile } } = require('fs');
+const fetch = require('node-fetch'); // Assurez-vous d'avoir installé node-fetch v2 ou v3
 
 // Charger config.json
 console.log('Loading config.json...');
@@ -11,25 +12,34 @@ const config = JSON.parse(configRaw);
 // Créer le client
 console.log('Creating Discord client...');
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates // Ajout de l'intent pour les logs vocaux
+  ]
 });
 
 client.commands = new Collection();
 
+// Fonction utilitaire pour charger les commandes
+function loadCommands(client, commandsPath) {
+  const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+  const commandsArray = [];
+  for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+    client.commands.set(command.data.name, command);
+    commandsArray.push(command.data.toJSON());
+    console.log(`Loaded command: ${command.data.name}`);
+  }
+  return commandsArray;
+}
+
 // Charger les commandes
 console.log('Loading commands...');
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js')); // .js au lieu de .mjs
-
-const commandsArray = [];
-
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-  const command = require(filePath);
-  client.commands.set(command.data.name, command);
-  commandsArray.push(command.data.toJSON());
-  console.log(`Loaded command: ${command.data.name}`);
-}
+const commandsArray = loadCommands(client, commandsPath);
 
 // Charger settings.json
 console.log('Loading settings.json...');
@@ -85,10 +95,24 @@ client.on('messageCreate', async (message) => {
   // Log message received
   console.log(`Message received from ${message.author.tag}: ${message.content}`);
 
-  const guildId = message.guild.id;
-  const guildSettings = settings[guildId]?.automod;
+  // Recharge settings à chaque message pour éviter le cache
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+  } catch {
+    settings = {};
+  }
+  const guildSettings = settings[message.guild.id]?.automod;
 
   if (!guildSettings?.enabled) return;
+
+  // --- Ignorer les rôles configurés ---
+  const ignoredRoles = guildSettings.ignoredRoles || [];
+  if (ignoredRoles.length > 0 && message.member.roles.cache.some(r => ignoredRoles.includes(r.id))) {
+    // console.log(`Automod ignored for ${message.author.tag} (ignored role)`);
+    return;
+  }
+  // --- Fin ajout ---
 
   const member = message.member;
 
@@ -110,6 +134,10 @@ client.on('messageCreate', async (message) => {
       case 'warn':
         await message.channel.send(`⚠️ <@${message.author.id}> has been warned for **${reason}**.`);
         console.log(`Warned ${message.author.tag} for: ${reason}`);
+        // Ajout du warn dans warns.json et log modération
+        if (client.logModerationAction) {
+          client.logModerationAction(message.guild, message.author, 'warn', reason, message.client.user);
+        }
         break;
       case 'kick':
         await member.kick(reason);
@@ -134,7 +162,7 @@ client.on('messageCreate', async (message) => {
 
   // 🔗 Discord link
   if (guildSettings.categories?.discordLink?.enabled && /discord\.gg\/\w+/i.test(message.content)) {
-    await message.delete();
+    await message.delete().catch(e => console.warn('Failed to delete discord link message:', e));
     console.log('Deleted message containing Discord invite link.');
     await applySanction(guildSettings.categories.discordLink.sanction, 'Discord link not allowed');
   }
@@ -147,7 +175,7 @@ client.on('messageCreate', async (message) => {
 
   // 📣 Mention spam
   if (guildSettings.categories?.mentionSpam?.enabled && message.mentions.users.size >= 5) {
-    await message.delete();
+    await message.delete().catch(e => console.warn('Failed to delete mention spam message:', e));
     console.log('Deleted message for mention spam.');
     await applySanction(guildSettings.categories.mentionSpam.sanction, 'Mention spam');
   }
@@ -183,11 +211,153 @@ client.on('messageCreate', async (message) => {
       const lower = message.content.toLowerCase();
       const found = words.find(w => lower.includes(w));
       if (found) {
-        await message.delete();
+        await message.delete().catch(e => console.warn('Failed to delete bad word message:', e));
         console.log(`Deleted message for bad word: ${found}`);
         await applySanction(guildSettings.categories.badWords.sanction, `Forbidden word: ${found}`);
+
+        // Ajout automatique du warn dans warns.json
+        if (guildSettings.categories.badWords.sanction === 'warn') {
+          const warnsPath = path.join(__dirname, 'warns.json');
+          let warnsData = {};
+          if (fs.existsSync(warnsPath)) {
+            warnsData = JSON.parse(fs.readFileSync(warnsPath, 'utf8'));
+          }
+          if (!warnsData[guildId]) warnsData[guildId] = {};
+          if (!warnsData[guildId][message.author.id]) warnsData[guildId][message.author.id] = [];
+          warnsData[guildId][message.author.id].push({
+            moderator: 'Automod',
+            reason: `Forbidden word: ${found}`,
+            date: new Date().toLocaleString()
+          });
+          fs.writeFileSync(warnsPath, JSON.stringify(warnsData, null, 2));
+          console.log(`Warn added to warns.json for ${message.author.tag}`);
+        }
       }
     }
+  }
+
+  // --- Système de traduction automatique ---
+  try {
+    // Recharge settings à chaque message
+    let settings;
+    try {
+      settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+    } catch {
+      settings = {};
+    }
+    const guildSettings = settings[message.guild.id]?.translation;
+    if (
+      guildSettings &&
+      guildSettings.enabled &&
+      guildSettings.source &&
+      guildSettings.target &&
+      !message.author.bot
+    ) {
+      // Ne traduit pas les messages déjà traduits par le bot
+      if (message.webhookId || message.author.id === client.user.id) return;
+
+      // Appel à l'API libretranslate
+      const apiUrl = 'https://libretranslate.de/translate';
+      const body = {
+        q: message.content,
+        source: guildSettings.source,
+        target: guildSettings.target,
+        format: 'text'
+      };
+
+      // Ne traduit pas si source et target sont identiques
+      if (guildSettings.source === guildSettings.target) return;
+
+      // Optionnel : ignore les messages trop courts ou vides
+      if (!message.content || message.content.length < 2) return;
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (data && data.translatedText && data.translatedText !== message.content) {
+          const embed = new EmbedBuilder()
+            .setTitle('Message traduit')
+            .setDescription(data.translatedText)
+            .setColor(0x00bfff)
+            .setFooter({ text: 'DSU translation system' });
+          await message.reply({ embeds: [embed] });
+        }
+      } catch (err) {
+        console.warn('Translation API error:', err);
+      }
+    }
+  } catch (err) {
+    // Ignore translation errors
+  }
+
+  // --- Système de niveaux ---
+  try {
+    let settings;
+    try {
+      settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+    } catch {
+      settings = {};
+    }
+    const guildId = message.guild.id;
+    const levelConf = settings[guildId]?.level;
+    if (levelConf && levelConf.enabled) {
+      if (!levelConf.users) levelConf.users = {};
+      let userData = levelConf.users[message.author.id];
+      if (!userData) userData = levelConf.users[message.author.id] = { xp: 0, level: 1 };
+
+      // Calcul du multiplicateur de rôle booster
+      let multiplier = 1;
+      if (levelConf.boosters && message.member) {
+        for (const [roleId, mult] of Object.entries(levelConf.boosters)) {
+          if (message.member.roles.cache.has(roleId)) {
+            multiplier = Math.max(multiplier, mult);
+          }
+        }
+      }
+
+      // XP de base par message
+      const baseXp = 10;
+      const xpGain = baseXp * multiplier;
+      userData.xp += xpGain;
+
+      // Fonction pour calculer l'xp nécessaire pour le prochain niveau (progression exponentielle)
+      function xpForLevel(level) {
+        return 100 * Math.pow(1.25, level - 1);
+      }
+
+      // Passage de niveau
+      let leveledUp = false;
+      while (userData.xp >= xpForLevel(userData.level)) {
+        userData.xp -= xpForLevel(userData.level);
+        userData.level += 1;
+        leveledUp = true;
+      }
+
+      if (leveledUp && levelConf.channel) {
+        const channel = message.guild.channels.cache.get(levelConf.channel);
+        if (channel) {
+          channel.send({
+            embeds: [{
+              title: '🎉 Nouveau niveau !',
+              description: `<@${message.author.id}> vient de passer au niveau **${userData.level}** !`,
+              color: 0x00ff99,
+              footer: { text: 'DSU level system' },
+              timestamp: new Date()
+            }]
+          });
+        }
+      }
+
+      // Sauvegarde
+      settings[guildId].level = levelConf;
+      fs.writeFileSync('./settings.json', JSON.stringify(settings, null, 2));
+    }
+  } catch (err) {
+    console.warn('Level system error:', err);
   }
 });
 
@@ -242,19 +412,94 @@ client.on('guildMemberRemove', member => {
 
 client.on('voiceStateUpdate', (oldState, newState) => {
   const guildId = newState.guild.id;
-  const settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+  } catch {
+    settings = {};
+  }
   const conf = settings[guildId]?.logs;
-  if (!conf?.enabled || !conf.categories.vocal || !conf.channel) return;
+  if (!conf?.enabled || !conf.categories?.vocal || !conf.channel) {
+    console.log('Vocal log skipped: not enabled or misconfigured.');
+    return;
+  }
 
-  const channel = newState.guild.channels.cache.get(conf.channel);
-  if (!channel) return;
+  const logChannel = newState.guild.channels.cache.get(conf.channel);
+  if (!logChannel) {
+    console.warn('Log channel not found or bot has no access.');
+    return;
+  }
 
+  // Debug: log channel info and permissions
+  console.log(`Log channel resolved: ${logChannel.id} (${logChannel.name})`);
+  const permissions = logChannel.permissionsFor(newState.guild.members.me);
+  if (!permissions) {
+    console.warn('Could not resolve bot permissions in log channel.');
+    return;
+  }
+  if (!permissions.has('ViewChannel')) {
+    console.warn('Bot missing ViewChannel permission in log channel.');
+    return;
+  }
+  if (!permissions.has('SendMessages')) {
+    console.warn('Bot missing SendMessages permission in log channel.');
+    return;
+  }
+  if (!permissions.has('EmbedLinks')) {
+    console.warn('Bot missing EmbedLinks permission in log channel.');
+    return;
+  }
+
+  // Debug: log event type
   if (!oldState.channel && newState.channel) {
-    channel.send(`🔊 ${newState.member.user.tag} joined ${newState.channel.name}`);
-    console.log(`${newState.member.user.tag} joined voice channel ${newState.channel.name}`);
+    console.log('Detected voice join event');
   } else if (oldState.channel && !newState.channel) {
-    channel.send(`🔇 ${oldState.member.user.tag} left ${oldState.channel.name}`);
-    console.log(`${oldState.member.user.tag} left voice channel ${oldState.channel.name}`);
+    console.log('Detected voice leave event');
+  } else if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
+    console.log('Detected voice switch event');
+  } else {
+    console.log('No relevant voice event detected');
+    return;
+  }
+
+  // Join event
+  if (!oldState.channel && newState.channel) {
+    logChannel.send({
+      embeds: [{
+        title: '🔊 Voice Channel Join',
+        description: `${newState.member.user.tag} joined **${newState.channel.name}**`,
+        color: 0x00bfff,
+        timestamp: new Date()
+      }]
+    }).then(() => {
+      console.log('Voice join log sent.');
+    }).catch(e => console.error('Failed to send join log:', e));
+  }
+  // Leave event
+  else if (oldState.channel && !newState.channel) {
+    logChannel.send({
+      embeds: [{
+        title: '🔇 Voice Channel Leave',
+        description: `${oldState.member.user.tag} left **${oldState.channel.name}**`,
+        color: 0xff5555,
+        timestamp: new Date()
+      }]
+    }).then(() => {
+      console.log('Voice leave log sent.');
+    }).catch(e => console.error('Failed to send leave log:', e));
+  }
+  // Switch event
+  else if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
+    logChannel.send({
+      embeds: [{
+        title: '🔄 Voice Channel Switch',
+        description: `${newState.member.user.tag} switched from **${oldState.channel.name}** to **${newState.channel.name}**`,
+        color: 0xffcc00,
+        timestamp: new Date()
+      }]
+    }).then(() => {
+      console.log('Voice switch log sent.');
+    }).catch(e => console.error('Failed to send switch log:', e));
   }
 });
 
@@ -281,9 +526,16 @@ function logModerationAction(guild, user, action, reason, moderator) {
         }]
       });
       console.log(`Logged moderation action: ${action} for ${user.tag}`);
+    } else {
+      console.warn('Log channel not found or bot has no access.');
     }
+  } else {
+    console.warn('Logging is disabled or misconfigured for this guild.');
   }
 }
+
+// Rendez la fonction accessible aux commandes
+client.logModerationAction = logModerationAction;
 
 // Gestion des événements de bienvenue
 client.on('guildMemberAdd', async member => {
