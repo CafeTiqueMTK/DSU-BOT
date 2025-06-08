@@ -79,10 +79,17 @@ module.exports = {
           embeds: [{
             title: `👋 Bienvenue ${member.user.username} !`,
             description: `Nous sommes ravis de t'accueillir sur **${interaction.guild.name}** ! 🎉`,
-            thumbnail: { url: member.user.displayAvatarURL({ dynamic: true }) },
+            // Affiche la photo de profil à droite
             color: 0x00ff99,
             footer: { text: `Utilisateur ID : ${member.id}` },
-            timestamp: new Date()
+            timestamp: new Date(),
+            thumbnail: undefined,
+            image: undefined,
+            author: undefined,
+            // Ajout de l'avatar à droite via setThumbnail (déjà fait) mais pour la droite, il faut setImage (Discord affiche à droite)
+            // Donc :
+            thumbnail: undefined,
+            image: { url: member.user.displayAvatarURL({ dynamic: true }) }
           }]
         });
       }

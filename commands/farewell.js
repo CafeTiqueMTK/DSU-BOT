@@ -79,7 +79,7 @@ module.exports = {
           embeds: [{
             title: `😢 Au revoir ${member.user.username}...`,
             description: `Nous espérons te revoir sur **${interaction.guild.name}** !`,
-            thumbnail: { url: member.user.displayAvatarURL({ dynamic: true }) },
+            image: { url: member.user.displayAvatarURL({ dynamic: true }) },
             color: 0xff5555,
             footer: { text: `Utilisateur ID : ${member.id}` },
             timestamp: new Date()

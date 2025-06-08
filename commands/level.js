@@ -49,7 +49,6 @@ module.exports = {
     .addSubcommand(cmd =>
       cmd.setName('messagetest')
         .setDescription('Tester le message de gain de niveau')),
-
   async execute(interaction) {
     const guildId = interaction.guild.id;
     if (!fs.existsSync(settingsPath)) fs.writeFileSync(settingsPath, '{}');

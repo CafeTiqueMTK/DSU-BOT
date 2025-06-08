@@ -22,11 +22,17 @@ module.exports = {
           { name: 'ban', value: 'ban' }
         )
     )
+    .addIntegerOption(option =>
+      option.setName('duree')
+        .setDescription('Durée du mute en minutes (uniquement pour mute)')
+        .setRequired(false)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
     const count = interaction.options.getInteger('count');
     const action = interaction.options.getString('action');
+    const duree = interaction.options.getInteger('duree');
     const guildId = interaction.guild.id;
 
     const warnsPath = path.join(__dirname, '../warns.json');
@@ -43,14 +49,21 @@ module.exports = {
     const existingIndex = warnsData[guildId].actions.findIndex(a => a.count === count);
     if (existingIndex !== -1) {
       warnsData[guildId].actions[existingIndex].action = action;
+      if (action === 'mute') {
+        warnsData[guildId].actions[existingIndex].duree = duree || 10;
+      } else {
+        delete warnsData[guildId].actions[existingIndex].duree;
+      }
     } else {
-      warnsData[guildId].actions.push({ count, action });
+      const rule = { count, action };
+      if (action === 'mute') rule.duree = duree || 10;
+      warnsData[guildId].actions.push(rule);
     }
 
     fs.writeFileSync(warnsPath, JSON.stringify(warnsData, null, 2));
 
     return interaction.reply({
-      content: `✅ Action **${action}** définie pour **${count} warns**.`,
+      content: `✅ Action **${action}** définie pour **${count} warns**.` + (action === 'mute' ? ` (Durée : ${duree || 10} min)` : ''),
       ephemeral: true
     });
   }

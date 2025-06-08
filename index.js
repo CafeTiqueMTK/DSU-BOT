@@ -4,6 +4,9 @@ const path = require('path');
 const { readFileSync, promises: { readFile } } = require('fs');
 const fetch = require('node-fetch'); // Assurez-vous d'avoir installé node-fetch v2 ou v3
 
+// Déclare la variable automodActionsPath en haut du fichier
+const automodActionsPath = path.join(__dirname, 'automod_actions.json');
+
 // Charger config.json
 console.log('Loading config.json...');
 const configRaw = fs.readFileSync('./config.json', 'utf-8');
@@ -16,7 +19,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildVoiceStates // Ajout de l'intent pour les logs vocaux
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.MessageContent // <-- Ajoute cet intent pour lire le contenu des messages
   ]
 });
 
@@ -92,8 +96,8 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
-  // Log message received
-  console.log(`Message received from ${message.author.tag}: ${message.content}`);
+  // DEBUG : Vérifie si le bot lit bien les messages et affiche tout le contenu
+  console.log(`[DEBUG] Message reçu : Serveur=${message.guild.name} | Salon=#${message.channel.name} | Auteur=${message.author.tag} | Contenu="${message.content}"`);
 
   // Recharge settings à chaque message pour éviter le cache
   let settings;
@@ -108,8 +112,16 @@ client.on('messageCreate', async (message) => {
 
   // --- Ignorer les rôles configurés ---
   const ignoredRoles = guildSettings.ignoredRoles || [];
-  if (ignoredRoles.length > 0 && message.member.roles.cache.some(r => ignoredRoles.includes(r.id))) {
-    // console.log(`Automod ignored for ${message.author.tag} (ignored role)`);
+  if (
+    ignoredRoles.length > 0 &&
+    message.member &&
+    message.member.roles.cache.some(r => ignoredRoles.includes(r.id))
+  ) {
+    return;
+  }
+  // --- Ignorer les salons configurés ---
+  const ignoredChannels = guildSettings.ignoredChannels || [];
+  if (ignoredChannels.length > 0 && ignoredChannels.includes(message.channel.id)) {
     return;
   }
   // --- Fin ajout ---
@@ -129,6 +141,30 @@ client.on('messageCreate', async (message) => {
     } catch (e) {
       console.warn(`Could not send DM to ${message.author.tag}`);
     }
+
+    // --- Envoi notification dans le salon défini par automod.actionChannel ---
+    try {
+      const actionChannelId = guildSettings.actionChannel;
+      if (actionChannelId) {
+        const notifChannel = message.guild.channels.cache.get(actionChannelId);
+        if (notifChannel) {
+          const embed = new EmbedBuilder()
+            .setTitle('🚨 Action Automod')
+            .addFields(
+              { name: 'Utilisateur', value: `<@${message.author.id}> (${message.author.tag || 'inconnu'})`, inline: true },
+              { name: 'Sanction', value: String(sanction || 'Aucune'), inline: true },
+              { name: 'Raison', value: String(reason || 'Non spécifiée'), inline: false },
+              { name: 'Heure', value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: false }
+            )
+            .setColor(0xff0000)
+            .setTimestamp(new Date());
+          await notifChannel.send({ embeds: [embed] });
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur lors de l\'envoi de la notification automod :', e);
+    }
+    // --- Fin ajout ---
 
     switch (sanction) {
       case 'warn':
@@ -158,20 +194,54 @@ client.on('messageCreate', async (message) => {
         }
         break;
     }
+
+    // Enregistrement de l'action automod
+    try {
+      let actions = {};
+      if (fs.existsSync(automodActionsPath)) {
+        try {
+          const raw = fs.readFileSync(automodActionsPath, 'utf-8');
+          actions = raw.trim() ? JSON.parse(raw) : {};
+        } catch (e) {
+          console.warn('automod_actions.json corrompu ou vide, réinitialisation.');
+          actions = {};
+        }
+      }
+      if (!actions[message.guild.id]) actions[message.guild.id] = {};
+      if (!actions[message.guild.id][message.author.id]) actions[message.guild.id][message.author.id] = [];
+      actions[message.guild.id][message.author.id].push({
+        date: new Date().toISOString(),
+        sanction,
+        reason
+      });
+      fs.writeFileSync(automodActionsPath, JSON.stringify(actions, null, 2));
+    } catch (e) {
+      console.warn('Erreur lors de l\'enregistrement de l\'action automod :', e);
+    }
   };
 
-  // 🔗 Discord link
-  if (guildSettings.categories?.discordLink?.enabled && /discord\.gg\/\w+/i.test(message.content)) {
-    await message.delete().catch(e => console.warn('Failed to delete discord link message:', e));
-    console.log('Deleted message containing Discord invite link.');
-    await applySanction(guildSettings.categories.discordLink.sanction, 'Discord link not allowed');
+  // 🔗 Discord link (détection améliorée + debug)
+  if (
+    guildSettings.categories?.discordLink?.enabled &&
+    /(https?:\/\/)?(www\.)?(discord(app)?\.com\/invite|discord\.gg)\/[a-zA-Z0-9-]+/i.test(message.content)
+  ) {
+    console.log('[DEBUG] Lien Discord détecté, tentative de suppression...');
+    await message.delete().then(() => {
+      console.log('[DEBUG] Message supprimé avec succès.');
+    }).catch(e => {
+      console.warn('[DEBUG] Échec suppression du message :', e);
+    });
+    await applySanction(guildSettings.categories.discordLink.sanction, 'discord link$');
+    return;
   }
 
   // 👻 Ghost ping
-  if (guildSettings.categories?.ghostPing?.enabled && message.mentions.users.size > 0 && message.type === 0 && message.content.trim() === '') {
-    console.log('Detected ghost ping.');
-    await applySanction(guildSettings.categories.ghostPing.sanction, 'Ghost ping');
-  }
+  // Correction : ne considère ghost ping que si le message est supprimé juste après l'envoi (messageDelete), pas à la création
+  // Donc on retire ce bloc du messageCreate :
+  // if (guildSettings.categories?.ghostPing?.enabled && message.mentions.users.size > 0 && message.type === 0 && message.content.trim() === '') {
+  //   console.log('Detected ghost ping.');
+  //   await applySanction(guildSettings.categories.ghostPing.sanction, 'Ghost ping');
+  // }
 
   // 📣 Mention spam
   if (guildSettings.categories?.mentionSpam?.enabled && message.mentions.users.size >= 5) {
@@ -213,7 +283,16 @@ client.on('messageCreate', async (message) => {
       if (found) {
         await message.delete().catch(e => console.warn('Failed to delete bad word message:', e));
         console.log(`Deleted message for bad word: ${found}`);
-        await applySanction(guildSettings.categories.badWords.sanction, `Forbidden word: ${found}`);
+        // Récupère la durée si la sanction est mute
+        let muteDuration = 10;
+        if (guildSettings.categories.badWords.sanction === 'mute') {
+          muteDuration = guildSettings.categories.badWords.duree || 10;
+        }
+        await applySanction(
+          guildSettings.categories.badWords.sanction,
+          `Forbidden word: ${found}`,
+          muteDuration
+        );
 
         // Ajout automatique du warn dans warns.json
         if (guildSettings.categories.badWords.sanction === 'warn') {
@@ -234,64 +313,6 @@ client.on('messageCreate', async (message) => {
         }
       }
     }
-  }
-
-  // --- Système de traduction automatique ---
-  try {
-    // Recharge settings à chaque message
-    let settings;
-    try {
-      settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
-    } catch {
-      settings = {};
-    }
-    const guildSettings = settings[message.guild.id]?.translation;
-    if (
-      guildSettings &&
-      guildSettings.enabled &&
-      guildSettings.source &&
-      guildSettings.target &&
-      !message.author.bot
-    ) {
-      // Ne traduit pas les messages déjà traduits par le bot
-      if (message.webhookId || message.author.id === client.user.id) return;
-
-      // Appel à l'API libretranslate
-      const apiUrl = 'https://libretranslate.de/translate';
-      const body = {
-        q: message.content,
-        source: guildSettings.source,
-        target: guildSettings.target,
-        format: 'text'
-      };
-
-      // Ne traduit pas si source et target sont identiques
-      if (guildSettings.source === guildSettings.target) return;
-
-      // Optionnel : ignore les messages trop courts ou vides
-      if (!message.content || message.content.length < 2) return;
-
-      try {
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const data = await response.json();
-        if (data && data.translatedText && data.translatedText !== message.content) {
-          const embed = new EmbedBuilder()
-            .setTitle('Message traduit')
-            .setDescription(data.translatedText)
-            .setColor(0x00bfff)
-            .setFooter({ text: 'DSU translation system' });
-          await message.reply({ embeds: [embed] });
-        }
-      } catch (err) {
-        console.warn('Translation API error:', err);
-      }
-    }
-  } catch (err) {
-    // Ignore translation errors
   }
 
   // --- Système de niveaux ---
@@ -545,16 +566,15 @@ client.on('guildMemberAdd', async member => {
   if (conf?.enabled && conf.channel) {
     const channel = member.guild.channels.cache.get(conf.channel);
     if (channel) {
-      channel.send({
-        embeds: [{
-          title: `👋 Welcome ${member.user.username}!`,
-          description: `We are happy to welcome you to **${member.guild.name}**! 🎉`,
-          thumbnail: { url: member.user.displayAvatarURL({ dynamic: true }) },
-          color: 0x00ff99,
-          footer: { text: `User ID: ${member.id}` },
-          timestamp: new Date()
-        }]
-      });
+      const { EmbedBuilder } = require('discord.js');
+      const embed = new EmbedBuilder()
+        .setTitle(`👋 Bienvenue ${member.user.username} !`)
+        .setDescription(`Nous sommes heureux de t'accueillir sur **${member.guild.name}** ! 🎉`)
+        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+        .setColor(0x00ff99)
+        .setFooter({ text: `User ID: ${member.id}` })
+        .setTimestamp(new Date());
+      await channel.send({ embeds: [embed] });
       console.log(`Sent custom welcome embed for ${member.user.tag}`);
     }
   }
@@ -568,16 +588,15 @@ client.on('guildMemberRemove', async member => {
   if (conf?.enabled && conf.channel) {
     const channel = member.guild.channels.cache.get(conf.channel);
     if (channel) {
-      channel.send({
-        embeds: [{
-          title: `😢 ${member.user.username} left the server`,
-          description: `We hope to see you again on **${member.guild.name}**...`,
-          thumbnail: { url: member.user.displayAvatarURL({ dynamic: true }) },
-          color: 0xff5555,
-          footer: { text: `User ID: ${member.id}` },
-          timestamp: new Date()
-        }]
-      });
+      const { EmbedBuilder } = require('discord.js');
+      const embed = new EmbedBuilder()
+        .setTitle(`😢 ${member.user.username} a quitté le serveur`)
+        .setDescription(`Nous espérons te revoir sur **${member.guild.name}**...`)
+        .setImage(member.user.displayAvatarURL({ dynamic: true }))
+        .setColor(0xff5555)
+        .setFooter({ text: `User ID: ${member.id}` })
+        .setTimestamp(new Date());
+      await channel.send({ embeds: [embed] });
       console.log(`Sent custom farewell embed for ${member.user.tag}`);
     }
   }
@@ -590,4 +609,96 @@ client.once(Events.ClientReady, () => {
   console.log(`🤖 Bot is ready and logged in as ${client.user.tag}`);
   console.log('Bot is fully operational and listening for events.');
 });
+
+// Ajoutez ce bloc pour gérer le ghost ping dans l'event messageDelete :
+client.on('messageDelete', async (message) => {
+  if (!message.guild || message.author?.bot) return;
+
+  // Recharge settings à chaque suppression
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync('./settings.json', 'utf-8'));
+  } catch {
+    settings = {};
+  }
+  const guildSettings = settings[message.guild.id]?.automod;
+  if (!guildSettings?.enabled) return;
+
+  // Ghost ping : message supprimé qui mentionnait quelqu'un
+  if (
+    guildSettings.categories?.ghostPing?.enabled &&
+    message.mentions?.users?.size > 0
+  ) {
+    // Optionnel : ignorer les suppressions par modérateurs (si possible)
+    // if (message.deletable && !message.deleted) return;
+
+    // Appliquer la sanction
+    const member = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+    const applySanction = async (sanction, reason) => {
+      try {
+        await message.author.send({
+          embeds: [{
+            title: 'Sanction Automod',
+            description: `Tu as été sanctionné pour : **${reason}**\nMerci de respecter les règles du serveur.`,
+            color: 0xff0000
+          }]
+        });
+      } catch {}
+      // --- Ajout notification automod.actionChannel ---
+      try {
+        const actionChannelId = guildSettings.actionChannel;
+        if (actionChannelId) {
+          const notifChannel = message.guild.channels.cache.get(actionChannelId);
+          if (notifChannel) {
+            const { EmbedBuilder } = require('discord.js');
+            const embed = new EmbedBuilder()
+              .setTitle('🚨 Action Automod')
+              .addFields(
+                { name: 'Utilisateur', value: `<@${message.author.id}> (${message.author.tag || 'inconnu'})`, inline: true },
+                { name: 'Sanction', value: String(sanction || 'Aucune'), inline: true },
+                { name: 'Raison', value: String(reason || 'Non spécifiée'), inline: false },
+                { name: 'Heure', value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: false }
+              )
+              .setColor(0xff0000)
+              .setTimestamp(new Date());
+            await notifChannel.send({ embeds: [embed] });
+          }
+        }
+      } catch (e) {
+        console.warn('Erreur lors de l\'envoi de la notification automod :', e);
+      }
+      // --- Fin ajout ---
+      switch (sanction) {
+        case 'warn':
+          await message.channel?.send(`⚠️ <@${message.author.id}> has been warned for **${reason}**.`);
+          if (client.logModerationAction) {
+            client.logModerationAction(message.guild, message.author, 'warn', reason, client.user);
+          }
+          break;
+        case 'kick':
+          await member?.kick(reason);
+          break;
+        case 'ban':
+          await member?.ban({ reason });
+          break;
+        case 'mute':
+          const muteRole = message.guild.roles.cache.find(r => r.name.toLowerCase() === 'mute');
+          if (muteRole && member) await member.roles.add(muteRole, reason);
+          break;
+      }
+    };
+
+    await applySanction(guildSettings.categories.ghostPing.sanction, 'Ghost ping');
+  }
+});
+
+// Initialisation du système autoannounce TikTok
+try {
+  const autoannounce = require('./commands/autoannounce.js');
+  if (typeof autoannounce.initAutoAnnounce === 'function') {
+    autoannounce.initAutoAnnounce(client);
+  }
+} catch (e) {
+  console.warn('Autoannounce TikTok system not initialized:', e);
+}
 
