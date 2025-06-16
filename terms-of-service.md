@@ -1,62 +1,65 @@
-# 📜 Termes de service de DSU Bot
+# 📜 Terms of Service for DSU Bot
 
-**Dernière mise à jour : 16 juin 2025**
-
----
-
-## 1. Acceptation des termes
-
-En utilisant **DSU Bot** (le "Bot"), vous acceptez de respecter les présents Termes de service.  
-Si vous n’acceptez pas ces conditions, veuillez ne pas utiliser le Bot.
+**Last updated: June 16, 2025**
 
 ---
 
-## 2. Description du service
+## 1. Acceptance of Terms
 
-DSU Bot fournit des fonctionnalités de **[modération, support, utilitaires, etc.]**.
-
----
-
-## 3. Utilisation acceptable
-
-L’utilisateur s’engage à ne pas utiliser le Bot pour :
-- des activités illégales ou non autorisées ;
-- harceler, menacer ou diffuser du contenu haineux, violent ou discriminatoire ;
-- diffuser des logiciels malveillants, du spam ou du contenu nuisible.
-
-L’équipe de DSU se réserve le droit de restreindre l’accès au Bot sans préavis en cas de non-respect.
+By using **DSU Bot** (the "Bot"), you agree to comply with these Terms of Service.  
+If you do not agree to these terms, please do not use the Bot.
 
 ---
 
-## 4. Collecte de données
+## 2. Service Description
 
-Le Bot peut collecter certaines données techniques nécessaires à son fonctionnement :
-- Identifiants utilisateur ou de message ;
-- Données de configuration ou préférences serveur ;
+DSU Bot provides features such as **[moderation, support, utilities, etc.]**.
 
 ---
 
-## 5. Limitation de responsabilité
+## 3. Acceptable Use
 
-Le Bot est fourni **"tel quel"**, sans garantie explicite ou implicite.  
-L’utilisateur accepte que l’équipe de DSU ne soit pas responsable :
-- des interruptions de service,
-- de pertes de données,
-- de dommages liés à l’utilisation du Bot.
+You agree not to use the Bot for:
+- Any illegal or unauthorized activities;
+- Harassing, threatening, or spreading hateful, violent, or discriminatory content;
+- Distributing malware, spam, or harmful content.
+
+The DSU team reserves the right to restrict access to the Bot at any time and without notice in the event of a violation.
 
 ---
 
-## 6. Modifications des termes
+## 4. Data Collection
 
-Ces termes peuvent être modifiés à tout moment.  
+The Bot may collect certain technical data necessary for its operation:
+- User or message identifiers;
+- Configuration data or server preferences;
+
+🔒 **No sensitive or personal data is intentionally collected.**
+
+---
+
+## 5. Limitation of Liability
+
+The Bot is provided **"as is"**, with no explicit or implied warranties.  
+You agree that the DSU team shall not be held liable for:
+- Service interruptions,
+- Data loss,
+- Damages resulting from the use of the Bot.
+
+---
+
+## 6. Changes to the Terms
+
+These terms may be updated at any time.  
+Users will be informed of major changes when applicable.
 
 ---
 
 ## 7. Contact
 
-Pour toute question ou remarque concernant ces termes :  
+For any questions or concerns regarding these terms:  
 📧 **sirurguetthomas85@gmail.com**
 
 ---
 
-*Merci d’utiliser DSU Bot !*
+*Thank you for using DSU Bot!*
